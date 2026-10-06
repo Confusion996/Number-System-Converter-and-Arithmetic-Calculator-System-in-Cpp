@@ -2,211 +2,255 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#include <cctype>
-#include <iomanip>
-#include <stdexcept>
+#include <cmath>
 
 struct InputNumber {
     std::string original;
     int base;
     long long dec_val;
+    std::string r_minus_1_comp;
+    std::string r_comp;
 };
 
-// Helper function to sanitize (trim whitespace and uppercase) string
-std::string sanitize_string(std::string str) {
-    // Remove leading and trailing whitespace
-    auto start = std::find_if_not(str.begin(), str.end(), ::isspace);
-    auto end = std::find_if_not(str.rbegin(), str.rend(), ::isspace).base();
-    
-    if (start >= end) return "";
-    
-    std::string trimmed(start, end);
-    std::transform(trimmed.begin(), trimmed.end(), trimmed.begin(), ::toupper);
-    return trimmed;
+// Converts a hex/decimal character to its integer value
+int char_to_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return 0;
 }
 
-// Validates input string against chosen base and parses to long long
-long long validate_and_to_decimal(const std::string& raw_str, int base) {
-    std::string str = sanitize_string(raw_str);
-    if (str.empty()) {
-        throw std::invalid_argument("Input cannot be empty.");
-    }
+// Converts an integer value (0-15) to its hex character
+char val_to_char(int val) {
+    const char digits[] = "0123456789ABCDEF";
+    return digits[val];
+}
 
-    size_t idx = 0;
-    bool is_negative = false;
-    if (str[0] == '-') {
-        is_negative = true;
-        idx = 1;
-    }
-
-    if (idx >= str.length()) {
-        throw std::invalid_argument("Invalid number format.");
-    }
+// Validates input string against allowed digits for selected base
+bool is_valid_input(const std::string& s, int base) {
+    if (s.empty()) return false;
 
     std::string allowed;
     switch (base) {
         case 2:  allowed = "01"; break;
         case 8:  allowed = "01234567"; break;
         case 10: allowed = "0123456789"; break;
-        case 16: allowed = "0123456789ABCDEF"; break;
-        default: throw std::invalid_argument("Unsupported base.");
+        case 16: allowed = "0123456789ABCDEFabcdef"; break;
+        default: return false;
     }
 
-    // Validate characters
-    bool valid = std::all_of(str.begin() + idx, str.end(), [&allowed](char c) {
-        return allowed.find(c) != std::string::npos;
-    });
+    size_t start = (s[0] == '-') ? 1 : 0;
+    if (start >= s.length()) return false;
 
-    if (!valid) {
-        throw std::invalid_argument("Invalid character(s) for the specified base.");
+    for (size_t i = start; i < s.length(); ++i) {
+        if (allowed.find(s[i]) == std::string::npos) {
+            return false;
+        }
     }
-
-    // Convert string to long long integer
-    size_t processed_chars = 0;
-    long long val = std::stoll(str.substr(idx), &processed_chars, base);
-    
-    return is_negative ? -val : val;
+    return true;
 }
 
-// Formats decimal value into Base 2, 8, 10, or 16 strings
+// Formats a signed decimal integer to a base string
 std::string format_base(long long val, int base) {
     if (val == 0) return "0";
 
     bool is_negative = val < 0;
-    unsigned long long uval = is_negative ? static_cast<unsigned long long>(-val) 
-                                          : static_cast<unsigned long long>(val);
+    unsigned long long uval = is_negative ? -val : val;
 
-    std::string temp;
-    const char digits[] = "0123456789ABCDEF";
-
+    std::string result = "";
     while (uval > 0) {
-        temp += digits[uval % base];
+        result += val_to_char(uval % base);
         uval /= base;
     }
 
-    if (is_negative) {
-        temp += '-';
-    }
+    if (is_negative) result += '-';
+    std::reverse(result.begin(), result.end());
+    return result;
+}
 
-    std::reverse(temp.begin(), temp.end());
-    return temp;
+// Computes (r-1)'s complement (Diminished Radix Complement)
+std::string get_r_minus_1_complement(const std::string& val_str, int base) {
+    std::string comp = "";
+    int max_digit = base - 1;
+
+    for (char c : val_str) {
+        if (c == '-') continue; // Skip sign if present
+        int digit = char_to_val(c);
+        int complement_digit = max_digit - digit;
+        comp += val_to_char(complement_digit);
+    }
+    return comp;
+}
+
+// Computes r's complement (Radix Complement) = (r-1)'s complement + 1
+std::string get_r_complement(const std::string& val_str, int base) {
+    std::string r_minus_1 = get_r_minus_1_complement(val_str, base);
+    
+    // Parse r-1 complement to value, add 1, then convert back
+    long long dec = std::stoll(r_minus_1, nullptr, base) + 1;
+    std::string r_comp = format_base(dec, base);
+
+    // Ensure fixed width matching original length if padded
+    while (r_comp.length() < val_str.length()) {
+        r_comp = "0" + r_comp;
+    }
+    return r_comp;
+}
+
+// Performs subtraction using complement addition rules: M - N
+long long complement_subtract(long long M_dec, long long N_dec, int base) {
+    // Determine required digit width
+    long long max_val = std::max(std::abs(M_dec), std::abs(N_dec));
+    std::string max_str = format_base(max_val, base);
+    size_t width = max_str.length() + 1; // Extra digit for carry room
+
+    // Format M and N as fixed-width positive base strings
+    std::string M_str = format_base(M_dec, base);
+    std::string N_str = format_base(N_dec, base);
+
+    while (M_str.length() < width) M_str = "0" + M_str;
+    while (N_str.length() < width) N_str = "0" + N_str;
+
+    // Get r's complement of N
+    std::string N_r_comp = get_r_complement(N_str, base);
+    long long N_comp_dec = std::stoll(N_r_comp, nullptr, base);
+
+    // M + (r's complement of N)
+    long long sum = M_dec + N_comp_dec;
+    long long modulus = 1;
+    for (size_t i = 0; i < width; ++i) modulus *= base;
+
+    if (sum >= modulus) {
+        // End carry present (M >= N): Discard end carry
+        return sum - modulus;
+    } else {
+        // No end carry (M < N): Take r's complement of result & negate
+        std::string sum_str = format_base(sum, base);
+        while (sum_str.length() < width) sum_str = "0" + sum_str;
+
+        std::string res_r_comp = get_r_complement(sum_str, base);
+        long long res_dec = std::stoll(res_r_comp, nullptr, base);
+        return -res_dec;
+    }
 }
 
 int main() {
-    std::cout << "=================================================================\n";
-    std::cout << "  NUMBER SYSTEM CONVERTER AND ARITHMETIC CALCULATOR (C++)\n";
-    std::cout << "=================================================================\n";
-
     int num_inputs = 0;
-    while (true) {
+
+    std::cout << "--- NUMBER SYSTEM CONVERTER, COMPLEMENTS & CALCULATOR ---\n";
+
+    // 1. Prompt for input count
+    while (num_inputs < 3) {
         std::cout << "Enter number of inputs (minimum 3): ";
-        if (std::cin >> num_inputs && num_inputs >= 3) {
-            break;
+        std::cin >> num_inputs;
+        if (num_inputs < 3) {
+            std::cout << "Error: Minimum 3 inputs required.\n";
         }
-        std::cout << "Error: Please enter an integer >= 3.\n";
-        std::cin.clear();
-        std::cin.ignore(10000, '\n');
     }
 
     std::vector<InputNumber> inputs;
-    inputs.reserve(num_inputs);
 
+    // 2. Data input loop
     for (int i = 0; i < num_inputs; ++i) {
-        std::cout << "\n--- Input #" << (i + 1) << " ---\n";
+        int base = 0;
+        std::string raw_val;
+
         while (true) {
-            int base = 0;
-            std::cout << "Select base (2, 8, 10, 16): ";
-            if (!(std::cin >> base) || (base != 2 && base != 8 && base != 10 && base != 16)) {
-                std::cout << "Invalid base! Choose 2, 8, 10, or 16.\n";
-                std::cin.clear();
-                std::cin.ignore(10000, '\n');
+            std::cout << "\nInput #" << (i + 1) << " Base (2, 8, 10, 16): ";
+            std::cin >> base;
+
+            if (base != 2 && base != 8 && base != 10 && base != 16) {
+                std::cout << "Invalid base! Pick 2, 8, 10, or 16.\n";
                 continue;
             }
 
-            std::string raw_val;
-            std::cout << "Enter value for base " << base << ": ";
+            std::cout << "Enter number string: ";
             std::cin >> raw_val;
 
-            try {
-                long long dec_val = validate_and_to_decimal(raw_val, base);
-                inputs.push_back({sanitize_string(raw_val), base, dec_val});
-                break;
-            } catch (const std::exception& e) {
-                std::cout << "Input Error: " << e.what() << " Please try again.\n";
+            if (!is_valid_input(raw_val, base)) {
+                std::cout << "Invalid digits for Base " << base << "! Try again.\n";
+                continue;
             }
-        }
-    }
 
-    // Display Conversion Table
-    std::cout << "\n=================================================================\n";
-    std::cout << "                  INDIVIDUAL CONVERSIONS\n";
-    std::cout << "=================================================================\n";
-    std::cout << std::left 
-              << std::setw(18) << "Input (Base)" << " | "
-              << std::setw(12) << "Binary (2)" << " | "
-              << std::setw(10) << "Octal (8)" << " | "
-              << std::setw(10) << "Decimal (10)" << " | "
-              << std::setw(8)  << "Hex (16)" << "\n";
-    std::cout << "-----------------------------------------------------------------\n";
+            long long dec_val = std::stoll(raw_val, nullptr, base);
+            std::string r_1_comp = get_r_minus_1_complement(raw_val, base);
+            std::string r_comp = get_r_complement(raw_val, base);
 
-    for (const auto& item : inputs) {
-        std::string label = item.original + " (Base " + std::to_string(item.base) + ")";
-        std::cout << std::left 
-                  << std::setw(18) << label << " | "
-                  << std::setw(12) << format_base(item.dec_val, 2) << " | "
-                  << std::setw(10) << format_base(item.dec_val, 8) << " | "
-                  << std::setw(10) << format_base(item.dec_val, 10) << " | "
-                  << std::setw(8)  << format_base(item.dec_val, 16) << "\n";
-    }
-
-    // Select Operation
-    char op;
-    std::cout << "\n=================================================================\n";
-    std::cout << "                 ARITHMETIC OPERATION\n";
-    std::cout << "=================================================================\n";
-    while (true) {
-        std::cout << "Select operation (+, -, *, /): ";
-        std::cin >> op;
-        if (op == '+' || op == '-' || op == '*' || op == '/') {
+            inputs.push_back({raw_val, base, dec_val, r_1_comp, r_comp});
             break;
         }
-        std::cout << "Invalid operator! Choose +, -, *, or /.\n";
     }
 
-    // Compute Result
+    // 3. Display Individual Conversions & Complements
+    std::cout << "\n--- INDIVIDUAL CONVERSIONS & COMPLEMENTS ---\n";
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        const auto& item = inputs[i];
+        std::cout << "Input #" << (i + 1) << ": " << item.original << " (Base " << item.base << ")\n"
+                  << "  Conversions : Bin: " << format_base(item.dec_val, 2)
+                  << " | Oct: " << format_base(item.dec_val, 8)
+                  << " | Dec: " << format_base(item.dec_val, 10)
+                  << " | Hex: " << format_base(item.dec_val, 16) << "\n"
+                  << "  Complements : " << (item.base - 1) << "'s Comp: " << item.r_minus_1_comp
+                  << " | " << item.base << "'s Comp: " << item.r_comp << "\n\n";
+    }
+
+    // 4. Select Operation Mode
+    int mode = 0;
+    std::cout << "Select Operation Mode:\n"
+              << "  (1) Standard Arithmetic (+, -, *, /)\n"
+              << "  (2) Sequential Complement Subtraction\n"
+              << "Choice (1 or 2): ";
+    std::cin >> mode;
+
     long long result = inputs[0].dec_val;
     std::string expr = inputs[0].original + "(base " + std::to_string(inputs[0].base) + ")";
 
-    try {
+    if (mode == 1) {
+        // Standard arithmetic path
+        char op;
+        while (true) {
+            std::cout << "Select operator (+, -, *, /): ";
+            std::cin >> op;
+            if (op == '+' || op == '-' || op == '*' || op == '/') break;
+            std::cout << "Invalid operator!\n";
+        }
+
         for (size_t i = 1; i < inputs.size(); ++i) {
             expr += " " + std::string(1, op) + " " + inputs[i].original + "(base " + std::to_string(inputs[i].base) + ")";
-            
+
             if (op == '+') result += inputs[i].dec_val;
             else if (op == '-') result -= inputs[i].dec_val;
             else if (op == '*') result *= inputs[i].dec_val;
             else if (op == '/') {
                 if (inputs[i].dec_val == 0) {
-                    throw std::runtime_error("Division by zero encountered.");
+                    std::cout << "\nError: Division by zero!\n";
+                    return 1;
                 }
                 result /= inputs[i].dec_val;
             }
         }
-    } catch (const std::exception& e) {
-        std::cout << "\nMath Error: " << e.what() << "\n";
-        return 1;
+    } else {
+        // Complement Subtraction Path
+        std::cout << "\n--- COMPLEMENT SUBTRACTION STEPS ---\n";
+        for (size_t i = 1; i < inputs.size(); ++i) {
+            expr += " - " + inputs[i].original + "(base " + std::to_string(inputs[i].base) + ")";
+            long long prev_res = result;
+
+            // Perform subtraction via complement addition
+            result = complement_subtract(result, inputs[i].dec_val, inputs[i].base);
+
+            std::cout << "Step " << i << ": " << prev_res << " - " << inputs[i].dec_val
+                      << " (using Base " << inputs[i].base << " complement addition) = " << result << "\n";
+        }
     }
 
-    // Display Final Output
-    std::cout << "\n=================================================================\n";
-    std::cout << "                      FINAL RESULT\n";
-    std::cout << "=================================================================\n";
+    // 5. Display Final Result
+    std::cout << "\n--- FINAL RESULT ---\n";
     std::cout << "Expression : " << expr << "\n";
-    std::cout << "-----------------------------------------------------------------\n";
-    std::cout << "Binary (Base 2)      : " << format_base(result, 2) << "\n";
-    std::cout << "Octal (Base 8)       : " << format_base(result, 8) << "\n";
-    std::cout << "Decimal (Base 10)    : " << format_base(result, 10) << "\n";
-    std::cout << "Hexadecimal (Base 16): " << format_base(result, 16) << "\n";
-    std::cout << "=================================================================\n";
+    std::cout << "Binary     : " << format_base(result, 2) << "\n";
+    std::cout << "Octal      : " << format_base(result, 8) << "\n";
+    std::cout << "Decimal    : " << format_base(result, 10) << "\n";
+    std::cout << "Hexadecimal: " << format_base(result, 16) << "\n";
 
     return 0;
 }
